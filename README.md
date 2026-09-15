@@ -18,6 +18,61 @@
 - 의존성: JUnit 5, AssertJ (테스트 전용). 프레임워크 없음.
 - 테스트 로그에 각 테스트의 통과/실패 이벤트가 출력되고, 마지막에 `Test summary: SUCCESS (N tests, ...)`가 찍힙니다.
 
+### 직접 계산해 보기 (수동 테스트 CLI)
+
+요율표는 프로젝트 루트의 `policies.txt`로, 오늘 날짜·카테고리·견적금액은 실행 중 입력으로 받습니다.
+
+```bash
+./gradlew -q --console=plain run
+```
+
+```
+=== 총수익 계산기 (수동 테스트) ===
+요율표 파일 [policies.txt]:
+policies.txt 에서 정책 3개를 읽었습니다.
+  default-v1    기본                2026-01-01 ~    1원 ~ 500,000원 20% / 500,001원 ~ 1,000,000원 10% / 1,000,001원 ~ 5%
+  default-v2    기본                2026-10-01 ~    1원 ~ 500,000원 18% / 500,001원 ~ 1,000,000원 10% / 1,000,001원 ~ 5%
+  FIXED_10-v1   카테고리 FIXED_10   2026-01-01 ~    고정 10%
+오늘 날짜 yyyy-MM-dd [2026-09-16]: 2026-10-05
+카테고리 (없으면 Enter):
+견적금액 (d 날짜 · c 카테고리 · r 요율표 다시 읽기 · p 요율표 · q 종료) > 950000
+
+[오늘 2026-10-05 · 카테고리 없음 · 적용 정책 default-v2]
+구간                          구간 금액  요율         수익
+1원 ~ 500,000원               500,000원   18%    410,000원
+500,001원 ~ 1,000,000원       450,000원   10%    405,000원
+1,000,001원 ~                       0원    5%          0원
+----------------------------------------------------------
+견적금액 950,000원 · 수수료 135,000원 · 총수익 815,000원
+```
+
+| 바꾸고 싶은 것 | 방법 |
+|---|---|
+| 수수료율·구간 | `policies.txt`를 고치고 CLI에서 `r` 입력 (재시작 불필요). 형식은 파일 상단 주석 참고 |
+| 견적금액 | 프롬프트에 금액 입력. `950000`, `950,000`, `950_000원` 모두 가능 |
+| 오늘 날짜 | 시작 시 입력하거나 `d`로 변경. 입력한 날짜가 `Clock.fixed`로 `ProfitCalculator`에 주입됨 |
+| 카테고리 | 시작 시 입력하거나 `c`로 변경. `FIXED_10`을 넣으면 시나리오 2의 고정 10% |
+
+`policies.txt`의 한 줄은 정책 한 버전입니다.
+
+```
+# id          | 카테고리 | 시행일     | 종료일 | 요율
+default-v1    | -        | 2026-01-01 | -      | 1~500_000:20, 500_001~1_000_000:10, 1_000_001~:5
+FIXED_10-v1   | FIXED_10 | 2026-01-01 | -      | flat:10
+```
+
+구간에 빈틈이 있거나 기본 정책이 없는 등 잘못 고치면 줄 번호가 담긴 오류가 출력되고, 기존 요율표를 그대로 씁니다.
+파일 끝에 주석 처리된 4구간 정책(6절)이 있으니 주석을 풀고 `r`을 입력해 구간 추가를 확인해 볼 수 있습니다.
+
+입력 없이 한 번만 계산하려면 옵션을 넘깁니다. `--today`를 생략하면 시스템 날짜를 씁니다.
+
+```bash
+./gradlew -q --console=plain run --args="--today 2026-10-05 --amount 950000"
+./gradlew -q --console=plain run --args="--today 2026-08-20 --category FIXED_10 --amount 950000 --policies my-policies.txt"
+```
+
+`-q --console=plain`은 Gradle 진행 표시줄이 입력 프롬프트와 섞이지 않게 합니다.
+
 ## 2. 요율표와 계산 방식
 
 ### 기준 요율표
@@ -222,11 +277,15 @@ com.example.profit
 │   ├── FeePolicyValidator    저장소 전체 검증 (effectiveFrom 중복, 기본 정책 effectiveTo 금지, 기본 정책 존재, from <= to)
 │   ├── FeePolicyResolver     FeePolicy resolve(LocalDate date, String categoryId)
 │   └── NoApplicablePolicyException
-└── application
-    └── ProfitCalculator      (Clock, FeePolicyResolver)
-        ├── calculateProfitAmount(Transaction tx)                          // tx.paidAt 기준
-        ├── calculateProfitAmount(Money amount, String categoryId)         // Clock의 오늘 기준
-        └── calculateProfitAmount(Money amount, String categoryId, LocalDate asOf)  // 시뮬레이션
+├── application
+│   └── ProfitCalculator      (Clock, FeePolicyResolver)
+│       ├── calculateProfitAmount(Transaction tx)                          // tx.paidAt 기준
+│       ├── calculateProfitAmount(Money amount, String categoryId)         // Clock의 오늘 기준
+│       └── calculateProfitAmount(Money amount, String categoryId, LocalDate asOf)  // 시뮬레이션
+└── cli                       수동 테스트용. 도메인·정책·계산기는 이 패키지를 모른다.
+    ├── ProfitCli             main. 대화형 / --amount 한 번 계산. 입력한 오늘 날짜를 Clock.fixed로 주입.
+    ├── PolicyFileParser      policies.txt → List<FeePolicy>. 줄 번호가 붙은 형식 오류.
+    └── ProfitReport          내역·요율표 출력 (한글 2칸 폭 기준 정렬)
 ```
 
 테스트는 `src/test/java` 아래 같은 패키지 구조로 있으며, `support.Policies`에 공용 요율표 픽스처가 있습니다.
@@ -238,3 +297,5 @@ com.example.profit
 | `FeePolicyResolverTest` | 버전 선택, 카테고리 우선·기간 종료 후 복귀, 정책 없음 예외 |
 | `FeePolicyValidatorTest` | effectiveFrom 중복, 기본 정책 effectiveTo, 기본 정책 없음 등 |
 | `ProfitCalculatorTest` | `Clock.fixed` 기반 시나리오 1·2, Clock 기준 오늘 선택, `appliedPolicyId` 추적 |
+| `PolicyFileParserTest` | 구간제·고정율·소수 요율 파싱, 줄 번호가 붙은 형식 오류, 샘플 `policies.txt` 유효성 |
+| `ProfitCliTest` | 한 번 계산 모드, 대화형 세션(날짜·카테고리 변경), `r` 재로딩과 실패 시 기존 요율표 유지, 오류 후 계속 진행 |
