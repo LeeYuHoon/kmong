@@ -1,6 +1,6 @@
 # 거래 완료 금액 기반 총수익 계산기
 
-거래 완료 금액에서 플랫폼 수수료를 뺀 **총수익**을 계산하는 순수 Java 21 프로젝트입니다.
+거래 완료 금액에서 플랫폼 수수료를 뺀 **총수익**을 계산하는 순수 Java 25 프로젝트입니다.
 수수료는 누진(marginal) 구간제로, 금액을 구간별로 잘라 각각 계산한 뒤 합산합니다.
 
 핵심 진입점은 `ProfitCalculator.calculateProfitAmount(...)`이며, 요율은 코드에 박힌 상수가 아니라
@@ -13,7 +13,8 @@
 ./gradlew test
 ```
 
-- Java 21, Gradle Wrapper 포함 (별도 Gradle 설치 불필요)
+- JDK 25 필요, Gradle 9.7.1 Wrapper 포함 (별도 Gradle 설치 불필요)
+- `JAVA_HOME`이 JDK 25를 가리켜야 합니다. `java -version`이 아니라 `"$JAVA_HOME/bin/java" -version`으로 확인하세요.
 - 의존성: JUnit 5, AssertJ (테스트 전용). 프레임워크 없음.
 - 테스트 로그에 각 테스트의 통과/실패 이벤트가 출력되고, 마지막에 `Test summary: SUCCESS (N tests, ...)`가 찍힙니다.
 
@@ -72,6 +73,18 @@
 6. **반올림은 원 단위 절사, 구간별로 절사한 뒤 합산한다.** (2절 참고)
 7. **금액은 `long`, 요율은 `BigDecimal`, `double` 금지.**
 8. **프레임워크 없이 순수 Java.** 의존성은 JUnit 5와 AssertJ뿐입니다.
+
+### Java 25 기능 활용
+
+기능을 쓰기 위해 쓰지 않고, 코드가 더 명확해지는 곳에만 적용했습니다.
+
+| 기능 | 적용 위치 | 효과 |
+|---|---|---|
+| Stream Gatherers (`Gatherers.windowSliding`) | `TieredFeeStrategy` 구간 검증 | 인덱스 루프 없이 인접한 두 구간씩 묶어 경계 연속성을 검사 |
+| Flexible Constructor Bodies | `NoApplicablePolicyException` | `super()` 호출 전에 메시지 조립 |
+| Unnamed Variables (`_`) | `FeePolicyValidator` | 쓰지 않는 람다 파라미터를 명시 |
+| `record` + `sealed interface` | `TieredFeeStrategy`, `FlatFeeStrategy` | 전략 구현체를 불변 값 객체로 통일, 값 동등성 확보 |
+| Sequenced Collections (`getFirst`/`getLast`) | 구간 검증, 테스트 | 첫/마지막 요소 접근 |
 
 ## 4. 시나리오 1 해설: "다음 달부터 1구간 수수료가 20% → 18%로 변경된다. 지난달 거래를 다시 계산해야 한다."
 
@@ -197,8 +210,8 @@ com.example.profit
 │   ├── ProfitRounding        라운딩 모드 상수 (RoundingMode.DOWN)
 │   ├── Tier                  record(Money from, Money to /*null = 무한*/, Rate rate). amountWithin, label.
 │   ├── FeeStrategy           sealed interface: ProfitBreakdown calculate(Money amount)
-│   ├── TieredFeeStrategy     List<Tier> 보유. 생성자에서 구간 정합성 검증. 누진 계산.
-│   ├── FlatFeeStrategy       Rate 하나. 내역 단일 행.
+│   ├── TieredFeeStrategy     record(List<Tier> tiers). compact 생성자에서 구간 정합성 검증. 누진 계산.
+│   ├── FlatFeeStrategy       record(Rate rate). 내역 단일 행.
 │   ├── FeePolicy             record(id, categoryId /*null = 기본*/, effectiveFrom, effectiveTo /*카테고리만*/, strategy)
 │   ├── ProfitBreakdown       record(Money total, List<TierResult> lines, String appliedPolicyId)
 │   ├── TierResult            record(String label, Money amount, Rate rate, Money profit)
