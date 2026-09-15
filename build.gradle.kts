@@ -1,5 +1,6 @@
 plugins {
     java
+    application
 }
 
 group = "com.example.profit"
@@ -24,6 +25,16 @@ dependencies {
 
 tasks.withType<JavaCompile>().configureEach {
     options.encoding = "UTF-8"
+}
+
+application {
+    mainClass.set("com.example.profit.cli.ProfitCli")
+}
+
+// 수동 테스트 CLI: 키보드 입력을 프로그램으로 넘기고, 한글 출력이 깨지지 않게 UTF-8로 고정한다
+tasks.named<JavaExec>("run") {
+    standardInput = System.`in`
+    jvmArgs("-Dstdout.encoding=UTF-8", "-Dstderr.encoding=UTF-8")
 }
 
 tasks.test {
