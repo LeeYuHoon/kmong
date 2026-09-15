@@ -282,34 +282,57 @@ repository.add(v3);
 
 ```
 com.example.profit
-├── domain
-│   ├── Money                 값 객체. long won. 음수 금지. plus/minus/min.
-│   ├── Rate                  값 객체. BigDecimal percent, 0~100 검증. of(20), of("18.5"). profitOf(Money).
-│   ├── ProfitRounding        라운딩 모드 상수 (RoundingMode.DOWN)
-│   ├── Tier                  record(Money from, Money to /*null = 무한*/, Rate rate). amountWithin, label.
-│   ├── FeeStrategy           sealed interface: ProfitBreakdown calculate(Money amount)
-│   ├── TieredFeeStrategy     record(List<Tier> tiers). compact 생성자에서 구간 정합성 검증. 누진 계산.
-│   ├── FlatFeeStrategy       record(Rate rate). 내역 단일 행.
-│   ├── FeePolicy             record(id, categoryId /*null = 기본*/, effectiveFrom, effectiveTo /*카테고리만*/, strategy)
-│   ├── ProfitBreakdown       record(Money total, List<TierResult> lines, String appliedPolicyId)
-│   ├── TierResult            record(String label, Money amount, Rate rate, Money profit)
-│   └── Transaction           record(Money amount, LocalDate paidAt, String categoryId /*nullable*/)
-├── policy
-│   ├── FeePolicyRepository   interface: List<FeePolicy> findAll()
-│   ├── InMemoryFeePolicyRepository   생성/추가 시 전체 검증. 수정·삭제 없음.
-│   ├── FeePolicyValidator    저장소 전체 검증 (effectiveFrom 중복, 기본 정책 effectiveTo 금지, 기본 정책 존재, from <= to)
-│   ├── FeePolicyResolver     FeePolicy resolve(LocalDate date, String categoryId)
-│   └── NoApplicablePolicyException
-├── application
-│   └── ProfitCalculator      (Clock, FeePolicyResolver)
-│       ├── calculateProfitAmount(Transaction tx)                          // tx.paidAt 기준
-│       ├── calculateProfitAmount(Money amount, String categoryId)         // Clock의 오늘 기준
-│       └── calculateProfitAmount(Money amount, String categoryId, LocalDate asOf)  // 시뮬레이션
-└── cli                       수동 테스트용. 도메인·정책·계산기는 이 패키지를 모른다.
-    ├── ProfitCli             main. 대화형 / --amount 한 번 계산. 입력한 오늘 날짜를 Clock.fixed로 주입.
-    ├── PolicyFileParser      policies.txt → List<FeePolicy>. 줄 번호가 붙은 형식 오류.
-    └── ProfitReport          내역·요율표 출력 (한글 2칸 폭 기준 정렬)
+├── domain        금액·요율·구간 같은 값과 수수료 계산 규칙
+├── policy        기간이 붙은 요율 정책의 저장·검증·선택
+├── application   총수익 계산의 진입점
+└── cli           수동 테스트용 터미널 프로그램 (다른 패키지는 cli를 모릅니다)
 ```
+
+### domain — 값과 계산 규칙
+
+| 클래스 | 하는 일 |
+|---|---|
+| `Money` | 원 단위 금액. 음수를 막고 더하기·빼기·작은 값 고르기, `1,000,000원` 형식 출력을 제공합니다. |
+| `Rate` | 수수료율(%). 0~100만 허용하고 `18.5` 같은 소수도 받습니다. `profitOf`로 금액에서 수수료를 뺀 수익을 원 단위 절사해 계산합니다. |
+| `ProfitRounding` | 절사 규칙(`RoundingMode.DOWN`) 상수. 반올림 정책이 바뀌면 여기만 고칩니다. |
+| `Tier` | 누진 구간 하나(시작 금액, 끝 금액, 요율). 끝 금액이 없으면 마지막 구간입니다. 총액 중 이 구간에 속하는 금액과 `1원 ~ 500,000원` 같은 라벨을 만듭니다. |
+| `FeeStrategy` | 수수료 계산 방식의 공통 인터페이스(`calculate`). 구간제와 고정율만 구현할 수 있도록 `sealed`로 막아 두었습니다. |
+| `TieredFeeStrategy` | 누진 구간제. 생성할 때 구간에 빈틈·겹침이 없는지 검사하고, 계산할 때 구간별로 금액을 잘라 수익을 합산합니다. |
+| `FlatFeeStrategy` | 구간과 상관없이 전체 금액에 고정 요율을 적용합니다. 내역은 한 줄입니다. |
+| `FeePolicy` | 요율 정책 한 버전(id, 카테고리, 시행일, 종료일, 계산 방식). 기본 정책·카테고리 정책을 만드는 메서드와, 특정 날짜에 적용되는지 판단하는 `covers`를 제공합니다. |
+| `ProfitBreakdown` | 계산 결과. 총수익, 구간별 내역, 적용된 정책 id를 담습니다. |
+| `TierResult` | 계산 내역 한 줄(구간 라벨, 구간 금액, 요율, 구간 수익). |
+| `Transaction` | 거래 한 건(금액, 결제일, 카테고리). 결제일이 요율을 정하는 기준입니다. |
+
+### policy — 정책 저장·검증·선택
+
+| 클래스 | 하는 일 |
+|---|---|
+| `FeePolicyRepository` | 저장된 정책 목록을 꺼내는 저장소 인터페이스(`findAll`). |
+| `InMemoryFeePolicyRepository` | 메모리 저장소. 정책은 `add`로 새 버전을 추가만 할 수 있고(수정·삭제 없음), 추가할 때마다 전체를 검증해 규칙을 깨면 추가를 거부합니다. |
+| `FeePolicyValidator` | 정책 목록 전체를 검사합니다: id 중복, 같은 카테고리 안 시행일 중복, 기본 정책의 종료일 금지, 기본 정책 존재, 시행일 ≤ 종료일. |
+| `FeePolicyResolver` | 날짜와 카테고리로 적용할 정책을 고릅니다. 그 날짜에 유효한 카테고리 정책을 먼저 찾고, 없으면 그 날짜까지 시행된 가장 최신 기본 정책을 씁니다. |
+| `NoApplicablePolicyException` | 적용할 정책이 없을 때(예: 첫 시행일 이전 날짜) 발생하는 예외. |
+
+### application — 계산 진입점
+
+| 클래스 | 하는 일 |
+|---|---|
+| `ProfitCalculator` | 총수익 계산기. 정책을 골라 그 계산 방식으로 계산하고, 결과에 적용된 정책 id를 붙입니다. |
+
+`ProfitCalculator.calculateProfitAmount`는 기준 날짜에 따라 세 가지로 호출합니다.
+
+- `(Transaction tx)`: 거래의 **결제일** 기준. 요율이 나중에 바뀌어도 결과가 같습니다.
+- `(Money amount, String categoryId)`: 주입된 `Clock`의 **오늘** 기준. 지금 결제되는 거래용입니다.
+- `(Money amount, String categoryId, LocalDate asOf)`: **지정한 날짜** 기준. 미래 요율 미리보기 같은 시뮬레이션용입니다.
+
+### cli — 수동 테스트 프로그램
+
+| 클래스 | 하는 일 |
+|---|---|
+| `ProfitCli` | 실행 진입점(`main`). 대화형으로 날짜·카테고리·금액을 입력받거나, `--today`·`--category`·`--amount`·`--policies` 옵션으로 한 번만 계산합니다. 입력한 날짜는 `Clock.fixed`로 계산기에 넘깁니다. |
+| `PolicyFileParser` | `policies.txt`를 읽어 정책 목록으로 바꿉니다. 형식이 틀리면 몇 번째 줄이 틀렸는지 알려줍니다. |
+| `ProfitReport` | 계산 결과와 요율표를 터미널용 표로 만듭니다. 한글이 두 칸을 차지하는 것을 고려해 열을 맞춥니다. |
 
 테스트는 `src/test/java` 아래 같은 패키지 구조로 있으며, `support.Policies`에 공용 요율표 픽스처가 있습니다.
 
