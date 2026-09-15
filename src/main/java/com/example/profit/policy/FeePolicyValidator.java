@@ -7,6 +7,7 @@ import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Set;
 
 /**
@@ -48,8 +49,8 @@ public final class FeePolicyValidator {
                         "시행일이 종료일보다 늦습니다: " + policy.id()
                                 + " (" + policy.effectiveFrom() + " > " + policy.effectiveTo() + ")");
             }
-            String categoryKey = policy.categoryId() == null ? "" : policy.categoryId();
-            Set<LocalDate> froms = effectiveFromByCategory.computeIfAbsent(categoryKey, k -> new HashSet<>());
+            String categoryKey = Objects.requireNonNullElse(policy.categoryId(), "");
+            Set<LocalDate> froms = effectiveFromByCategory.computeIfAbsent(categoryKey, _ -> new HashSet<>());
             if (!froms.add(policy.effectiveFrom())) {
                 throw new IllegalArgumentException(
                         "같은 카테고리에 같은 시행일의 정책이 중복됩니다: "
